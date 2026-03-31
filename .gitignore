@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Flask / SQLite
+instance/
+*.db
+
+# App data (stored in ~/Library/Application Support/AudiobookGenerator/)
+uploads/
+output/
+
+# macOS
+.DS_Store

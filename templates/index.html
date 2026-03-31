@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audiobook Generator</title>
+<style>
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a24;
+    --surface2: #24243a;
+    --border: #2e2e48;
+    --accent: #7c6af7;
+    --accent2: #56cfbf;
+    --text: #e8e8f0;
+    --muted: #888899;
+    --error: #f07070;
+    --success: #56d97e;
+    --warn: #f0c060;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  /* Layout */
+  .app { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  header { text-align: center; margin-bottom: 36px; }
+  header h1 { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  header p { color: var(--muted); margin-top: 6px; }
+
+  /* Steps indicator */
+  .steps { display: flex; justify-content: center; gap: 0; margin-bottom: 32px; }
+  .step-item { display: flex; align-items: center; gap: 8px; }
+  .step-item + .step-item::before { content: ''; display: block; width: 40px; height: 2px; background: var(--border); margin: 0 4px; }
+  .step-dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; border: 2px solid var(--border); background: var(--surface); color: var(--muted); transition: all 0.2s; }
+  .step-dot.active { border-color: var(--accent); color: var(--accent); }
+  .step-dot.done { border-color: var(--success); background: var(--success); color: #000; }
+  .step-label { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+  .step-label.active { color: var(--text); }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; margin-bottom: 20px; }
+  .card h2 { font-size: 1.2rem; margin-bottom: 4px; }
+  .card p.hint { color: var(--muted); font-size: 0.88rem; margin-bottom: 20px; }
+
+  /* Upload zone */
+  .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 48px 24px; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(124,106,247,0.05); }
+  .upload-zone .icon { font-size: 3rem; margin-bottom: 12px; }
+  .upload-zone p { color: var(--muted); font-size: 0.9rem; }
+  .upload-zone strong { color: var(--text); }
+  #file-input { display: none; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #9580ff; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); }
+  .btn-success { background: var(--success); color: #000; }
+  .btn-danger { background: transparent; color: var(--error); border: 1px solid var(--error); }
+  .btn-danger:hover { background: rgba(240,112,112,0.1); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-sm { padding: 6px 12px; font-size: 0.8rem; }
+
+  /* Chapter table */
+  .chapter-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; max-height: 480px; overflow-y: auto; }
+  .chapter-row { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: grid; grid-template-columns: 36px 1fr auto auto; align-items: center; gap: 12px; }
+  .chapter-row .num { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
+  .chapter-row input.title-input { background: transparent; border: none; border-bottom: 1px solid transparent; color: var(--text); font-size: 0.95rem; width: 100%; outline: none; padding: 2px 0; }
+  .chapter-row input.title-input:focus { border-bottom-color: var(--accent); }
+  .chapter-row .chars { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+  .chapter-row .status-badge { padding: 2px 8px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; }
+  .badge-pending { background: rgba(136,136,153,0.2); color: var(--muted); }
+  .badge-generating { background: rgba(124,106,247,0.2); color: var(--accent); }
+  .badge-done { background: rgba(86,217,126,0.2); color: var(--success); }
+  .badge-error { background: rgba(240,112,112,0.2); color: var(--error); }
+
+  /* Form */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:600px) { .form-grid { grid-template-columns: 1fr; } }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.full { grid-column: 1 / -1; }
+  .form-group label { font-size: 0.82rem; color: var(--muted); font-weight: 600; letter-spacing: 0.03em; }
+  .form-group input, .form-group select { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 9px 12px; font-size: 0.9rem; outline: none; transition: border 0.15s; }
+  .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+  .form-group input[type=range] { padding: 6px 0; accent-color: var(--accent); }
+  .range-value { font-size: 0.8rem; color: var(--accent); font-weight: 600; margin-left: 8px; }
+  .range-row { display: flex; align-items: center; }
+
+  /* Progress */
+  .progress-bar { background: var(--border); border-radius: 20px; height: 8px; overflow: hidden; margin: 6px 0; }
+  .progress-fill { height: 100%; border-radius: 20px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.4s; }
+  .progress-label { font-size: 0.82rem; color: var(--muted); display: flex; justify-content: space-between; }
+
+  /* Alert */
+  .alert { border-radius: 8px; padding: 12px 16px; font-size: 0.88rem; margin-bottom: 16px; }
+  .alert-error { background: rgba(240,112,112,0.1); border: 1px solid var(--error); color: var(--error); }
+  .alert-success { background: rgba(86,217,126,0.1); border: 1px solid var(--success); color: var(--success); }
+  .alert-info { background: rgba(124,106,247,0.1); border: 1px solid var(--accent); color: var(--accent); }
+
+  /* Section actions */
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+
+  /* Spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: currentColor; border-radius: 50%; animation: spin 0.7s linear infinite; }
+
+  /* Hidden */
+  .hidden { display: none !important; }
+
+  /* Recent books */
+  .recent-list { display: flex; flex-direction: column; gap: 8px; }
+  .recent-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; transition: border 0.15s; }
+  .recent-item:hover { border-color: var(--accent); }
+  .recent-item .ri-meta { flex: 1; }
+  .recent-item .ri-title { font-weight: 600; font-size: 0.92rem; }
+  .recent-item .ri-sub { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+  /* Download grid */
+  .download-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+  .dl-row { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .dl-row .dl-title { flex: 1; font-size: 0.9rem; }
+  .dl-row .dl-status { font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Audiobook Generator</h1>
+    <p>Convert PDF, EPUB, or DOCX books into narrated audio chapters</p>
+  </header>
+
+  <!-- Step indicator -->
+  <div class="steps">
+    <div class="step-item">
+      <div class="step-dot active" id="step-dot-1">1</div>
+      <span class="step-label active" id="step-label-1">Upload</span>
+    </div>
+    <div class="step-item">
+      <div class="step-dot" id="step-dot-2">2</div>
+      <span class="step-label" id="step-label-2">Chapters</span>
+    </div>
+    <div class="step-item">
+      <div class="step-dot" id="step-dot-3">3</div>
+      <span class="step-label" id="step-label-3">Voice</span>
+    </div>
+    <div class="step-item">
+      <div class="step-dot" id="step-dot-4">4</div>
+      <span class="step-label" id="step-label-4">Generate</span>
+    </div>
+    <div class="step-item">
+      <div class="step-dot" id="step-dot-5">5</div>
+      <span class="step-label" id="step-label-5">Download</span>
+    </div>
+  </div>
+
+  <div id="alert-global"></div>
+
+  <!-- ── STEP 1: Upload ── -->
+  <div id="section-upload" class="card">
+    <h2>Upload Your Book</h2>
+    <p class="hint">Supported formats: PDF, EPUB, DOCX (max 200 MB)</p>
+
+    <div class="upload-zone" id="upload-zone">
+      <div class="icon">📚</div>
+      <strong>Drop your book here</strong>
+      <p>or click to browse</p>
+      <input type="file" id="file-input" accept=".pdf,.epub,.docx,*/*">
+    </div>
+
+    <div id="upload-status" class="hidden" style="margin-top:16px;">
+      <div class="alert alert-info" id="upload-msg"></div>
+      <div class="progress-bar"><div class="progress-fill" id="upload-progress" style="width:0%"></div></div>
+    </div>
+
+    <!-- Recent books -->
+    <div id="recent-section" style="margin-top:24px;">
+      <h3 style="font-size:0.9rem;color:var(--muted);margin-bottom:10px;">Recent Books</h3>
+      <div class="recent-list" id="recent-list"></div>
+    </div>
+  </div>
+
+  <!-- ── STEP 2: Chapters ── -->
+  <div id="section-chapters" class="card hidden">
+    <h2>Review Chapters</h2>
+    <p class="hint">Rename, delete, or reorder chapters before generating audio. Click a title to edit it.</p>
+
+    <div id="alert-chapters"></div>
+    <div class="chapter-list" id="chapter-list"></div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-confirm-chapters">Confirm Chapters →</button>
+      <button class="btn btn-secondary" id="btn-back-to-upload">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── STEP 3: Voice settings ── -->
+  <div id="section-voice" class="card hidden">
+    <h2>ElevenLabs Voice Settings</h2>
+    <p class="hint">Enter your API key to load available voices and models.</p>
+
+    <div id="alert-voice"></div>
+    <div class="form-grid">
+      <div class="form-group full">
+        <label>ELEVENLABS API KEY</label>
+        <div style="display:flex;gap:8px;">
+          <input type="password" id="api-key" placeholder="sk_..." style="flex:1;">
+          <button class="btn btn-secondary" id="btn-load-voices">Load Voices</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>VOICE</label>
+        <select id="voice-select"><option value="">— load voices first —</option></select>
+      </div>
+
+      <div class="form-group">
+        <label>MODEL</label>
+        <select id="model-select">
+          <option value="eleven_v3">v3 (most expressive)</option>
+          <option value="eleven_multilingual_v2">Multilingual v2</option>
+          <option value="eleven_turbo_v2_5">Turbo v2.5 (faster)</option>
+          <option value="eleven_flash_v2_5">Flash v2.5 (fastest)</option>
+          <option value="eleven_monolingual_v1">Monolingual v1 (English)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>SPEED <span class="range-value" id="speed-val">1.0×</span></label>
+        <div class="range-row">
+          <input type="range" id="speed" min="0.7" max="1.2" step="0.05" value="1.0" style="flex:1;">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>STABILITY <span class="range-value" id="stability-val">0.50</span></label>
+        <div class="range-row">
+          <input type="range" id="stability" min="0" max="1" step="0.05" value="0.5" style="flex:1;">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>SIMILARITY BOOST <span class="range-value" id="similarity-val">0.75</span></label>
+        <div class="range-row">
+          <input type="range" id="similarity" min="0" max="1" step="0.05" value="0.75" style="flex:1;">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>STYLE <span class="range-value" id="style-val">0.00</span></label>
+        <div class="range-row">
+          <input type="range" id="style" min="0" max="1" step="0.05" value="0" style="flex:1;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Presets -->
+    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-size:0.85rem;font-weight:600;color:var(--muted);">PRESETS</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="preset-name" placeholder="Preset name…"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:0.85rem;outline:none;width:160px;">
+          <button class="btn btn-secondary btn-sm" onclick="savePreset()">💾 Save</button>
+        </div>
+      </div>
+      <div id="preset-list" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-proceed-to-generate">Continue to Generate →</button>
+      <button class="btn btn-secondary" id="btn-back-to-chapters">← Back</button>
+    </div>
+  </div>
+
+  <!-- ── STEP 4: Generate ── -->
+  <div id="section-generate" class="card hidden">
+    <h2>Generate Audio</h2>
+    <p class="hint">Generate chapters one by one, or generate all remaining at once.</p>
+
+    <div id="alert-generate"></div>
+
+    <!-- Test voice strip -->
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <span style="font-size:0.88rem;font-weight:600;">🎧 Test Voice</span>
+          <span style="font-size:0.8rem;color:var(--muted);margin-left:8px;">Generates the first paragraph of Chapter 1</span>
+        </div>
+        <button class="btn btn-secondary" id="btn-test-voice">Generate Test</button>
+      </div>
+      <div id="test-voice-player" style="display:none;margin-top:12px;">
+        <audio id="test-audio" controls style="width:100%;height:36px;accent-color:var(--accent);"></audio>
+      </div>
+    </div>
+
+    <!-- Cost calculator strip -->
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <span style="font-size:0.88rem;font-weight:600;">💰 Cost Estimate</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <label style="font-size:0.78rem;color:var(--muted);">$ per 1k chars</label>
+          <input type="number" id="cost-per-1k" min="0" step="0.01" value="0.30"
+            style="width:80px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 8px;font-size:0.85rem;outline:none;"
+            oninput="recalcCosts()">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px;">
+        <div style="text-align:center;">
+          <div id="cost-total-chars" style="font-size:1.1rem;font-weight:700;color:var(--text);">—</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:2px;">Total characters</div>
+        </div>
+        <div style="text-align:center;">
+          <div id="cost-pending-total" style="font-size:1.1rem;font-weight:700;color:var(--warn);">—</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:2px;">Remaining cost</div>
+        </div>
+        <div style="text-align:center;">
+          <div id="cost-all-total" style="font-size:1.1rem;font-weight:700;color:var(--accent2);">—</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:2px;">Total book cost</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span id="gen-summary" style="font-size:0.85rem;color:var(--muted);"></span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-secondary" onclick="goToStep(3)">← Change Voice</button>
+        <button class="btn btn-primary" id="btn-generate-all-remaining">⚡ Generate All Remaining</button>
+        <button class="btn btn-secondary" id="btn-go-download" style="display:none;">View Downloads →</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <div class="progress-label">
+        <span id="gen-progress-label" style="color:var(--muted);font-size:0.82rem;"></span>
+        <span id="gen-progress-pct" style="color:var(--muted);font-size:0.82rem;"></span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="gen-progress-bar" style="width:0%"></div></div>
+    </div>
+
+    <div class="chapter-list" id="gen-chapter-list"></div>
+  </div>
+
+  <!-- ── STEP 5: Download ── -->
+  <div id="section-download" class="card hidden">
+    <h2>Download Audio</h2>
+    <p class="hint">Download individual chapters or all chapters as a ZIP file.</p>
+
+    <div id="alert-download"></div>
+    <div class="download-grid" id="download-list"></div>
+
+    <div class="actions">
+      <button class="btn btn-success" id="btn-download-all">⬇ Download All (ZIP)</button>
+      <button class="btn btn-secondary" id="btn-new-book">+ New Book</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──
+let currentBookId = null;
+let currentStep = 1;
+let sseSource = null;
+let chaptersData = []; // [{id, chapter_number, title, content, char_count, status}]
+
+// ── Utils ──
+function fmt(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : n; }
+function showAlert(containerId, msg, type='error') {
+  const el = document.getElementById(containerId);
+  if (!msg) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+}
+
+// ── Step management ──
+const sections = ['upload','chapters','voice','generate','download'];
+function goToStep(n) {
+  currentStep = n;
+  sections.forEach((s, i) => {
+    const sec = document.getElementById('section-'+s);
+    sec.classList.toggle('hidden', i+1 !== n);
+    const dot = document.getElementById('step-dot-'+(i+1));
+    const lbl = document.getElementById('step-label-'+(i+1));
+    dot.className = 'step-dot' + (i+1 < n ? ' done' : i+1 === n ? ' active' : '');
+    dot.textContent = i+1 < n ? '✓' : i+1;
+    lbl.className = 'step-label' + (i+1 === n ? ' active' : '');
+  });
+}
+
+// ── Recent books ──
+async function loadRecentBooks() {
+  try {
+    const res = await fetch('/api/books');
+    const books = await res.json();
+    const list = document.getElementById('recent-list');
+    if (!books.length) { list.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No previous books</p>'; return; }
+    list.innerHTML = books.map(b => `
+      <div class="recent-item" onclick="resumeBook(${b.id})">
+        <div class="ri-meta">
+          <div class="ri-title">${escHtml(b.title || b.original_filename)}</div>
+          <div class="ri-sub">${b.chapter_count} chapters · ${b.file_type.toUpperCase()} · ${b.status}</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();deleteBook(${b.id})">✕</button>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+async function resumeBook(id) {
+  currentBookId = id;
+  const res = await fetch('/api/books/'+id);
+  const book = await res.json();
+  if (book.status === 'done') { await loadDownloadStep(); goToStep(5); }
+  else if (book.status === 'generating') { await startSSE(id); goToStep(4); }
+  else { await loadChaptersStep(); goToStep(2); }
+}
+
+async function deleteBook(id) {
+  if (!confirm('Delete this book and its audio files?')) return;
+  await fetch('/api/books/'+id, {method:'DELETE'});
+  loadRecentBooks();
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Upload ──
+const zone = document.getElementById('upload-zone');
+const fileInput = document.getElementById('file-input');
+
+zone.addEventListener('click', () => fileInput.click());
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag'); handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+async function handleFile(file) {
+  if (!file) return;
+  showAlert('alert-global', '');
+
+  const statusDiv = document.getElementById('upload-status');
+  statusDiv.classList.remove('hidden');
+  document.getElementById('upload-msg').textContent = `Uploading ${file.name}…`;
+  document.getElementById('upload-progress').style.width = '30%';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/upload', {method:'POST', body:fd});
+  const data = await res.json();
+
+  if (data.error) { showAlert('alert-global', data.error); statusDiv.classList.add('hidden'); return; }
+
+  currentBookId = data.book_id;
+  document.getElementById('upload-progress').style.width = '60%';
+  document.getElementById('upload-msg').textContent = 'Parsing chapters…';
+
+  // Wait for parsed event via SSE (or poll)
+  await waitForParsed(data.book_id);
+}
+
+async function waitForParsed(bookId) {
+  return new Promise((resolve) => {
+    const es = new EventSource('/api/books/'+bookId+'/events');
+    es.onmessage = async (e) => {
+      const ev = JSON.parse(e.data);
+      if (ev.type === 'parsed') {
+        es.close();
+        document.getElementById('upload-progress').style.width = '100%';
+        document.getElementById('upload-msg').textContent = `Found ${ev.data.chapter_count} chapters!`;
+        setTimeout(async () => {
+          await loadChaptersStep();
+          goToStep(2);
+        }, 600);
+        resolve();
+      } else if (ev.type === 'error') {
+        es.close();
+        showAlert('alert-global', 'Parse error: ' + ev.data.message);
+        resolve();
+      }
+    };
+    es.onerror = () => { es.close(); showAlert('alert-global', 'Connection error during parsing.'); resolve(); };
+  });
+}
+
+// ── Chapters ──
+async function loadChaptersStep() {
+  const res = await fetch('/api/books/'+currentBookId+'/chapters');
+  chaptersData = await res.json();
+  renderChapterList();
+}
+
+function renderChapterList() {
+  const list = document.getElementById('chapter-list');
+  list.innerHTML = chaptersData.map((ch, i) => `
+    <div class="chapter-row" data-idx="${i}" draggable="true">
+      <span class="num">${ch.chapter_number}</span>
+      <input class="title-input" type="text" value="${escHtml(ch.title)}"
+        onchange="chaptersData[${i}].title = this.value">
+      <span class="chars">${fmt(ch.char_count)} chars</span>
+      <button class="btn btn-danger btn-sm" onclick="deleteChapter(${i})">✕</button>
+    </div>`).join('');
+}
+
+function deleteChapter(idx) {
+  chaptersData.splice(idx, 1);
+  chaptersData.forEach((ch, i) => ch.chapter_number = i+1);
+  renderChapterList();
+}
+
+document.getElementById('btn-confirm-chapters').addEventListener('click', async () => {
+  if (!chaptersData.length) { showAlert('alert-chapters', 'No chapters to confirm.'); return; }
+  const btn = document.getElementById('btn-confirm-chapters');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Saving…';
+
+  const res = await fetch('/api/books/'+currentBookId+'/chapters', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(chaptersData.map(ch => ({title:ch.title, content:ch.content||''})))
+  });
+  const data = await res.json();
+  btn.disabled = false; btn.textContent = 'Confirm Chapters →';
+
+  if (data.error) { showAlert('alert-chapters', data.error); return; }
+  goToStep(3);
+});
+
+document.getElementById('btn-back-to-upload').addEventListener('click', () => goToStep(1));
+
+// ── Voice settings & presets ──
+document.getElementById('btn-back-to-chapters').addEventListener('click', () => goToStep(2));
+
+const PRESETS_KEY = 'audiobook_elevenlabs_presets';
+const LAST_KEY    = 'audiobook_elevenlabs_last';
+
+function currentSettings() {
+  return {
+    api_key:    document.getElementById('api-key').value.trim(),
+    voice_id:   document.getElementById('voice-select').value,
+    voice_name: document.getElementById('voice-select').selectedOptions[0]?.text || '',
+    model_id:   document.getElementById('model-select').value,
+    speed:      document.getElementById('speed').value,
+    stability:  document.getElementById('stability').value,
+    similarity: document.getElementById('similarity').value,
+    style:      document.getElementById('style').value,
+  };
+}
+
+function applySettings(s) {
+  if (s.api_key)            document.getElementById('api-key').value = s.api_key;
+  if (s.speed != null)      document.getElementById('speed').value = s.speed;
+  if (s.stability != null)  document.getElementById('stability').value = s.stability;
+  if (s.similarity != null) document.getElementById('similarity').value = s.similarity;
+  if (s.style != null)      document.getElementById('style').value = s.style;
+  // voice_id + model_id applied after voices are loaded
+  ['speed','stability','similarity','style'].forEach(id => {
+    document.getElementById(id).dispatchEvent(new Event('input'));
+  });
+}
+
+function getPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); } catch(e) { return []; }
+}
+function setPresets(list) { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); }
+
+function savePreset() {
+  const name = document.getElementById('preset-name').value.trim();
+  if (!name) { showAlert('alert-voice', 'Enter a preset name first.'); return; }
+  const presets = getPresets();
+  const existing = presets.findIndex(p => p.name === name);
+  const entry = { name, ...currentSettings(), saved_at: new Date().toISOString() };
+  if (existing >= 0) presets[existing] = entry;
+  else presets.push(entry);
+  setPresets(presets);
+  localStorage.setItem(LAST_KEY, JSON.stringify(currentSettings()));
+  document.getElementById('preset-name').value = '';
+  renderPresets();
+  showAlert('alert-voice', `Preset "${name}" saved.`, 'success');
+  setTimeout(() => showAlert('alert-voice', ''), 2000);
+}
+
+function loadPreset(name) {
+  const preset = getPresets().find(p => p.name === name);
+  if (!preset) return;
+  applySettings(preset);
+  localStorage.setItem(LAST_KEY, JSON.stringify(preset));
+  // If voices already loaded, restore selection
+  const voiceSel = document.getElementById('voice-select');
+  if (voiceSel.options.length > 1 && preset.voice_id) voiceSel.value = preset.voice_id;
+  if (preset.model_id) document.getElementById('model-select').value = preset.model_id;
+  showAlert('alert-voice', `Loaded preset "${name}".`, 'success');
+  setTimeout(() => showAlert('alert-voice', ''), 2000);
+}
+
+function deletePreset(name) {
+  const presets = getPresets().filter(p => p.name !== name);
+  setPresets(presets);
+  renderPresets();
+}
+
+function renderPresets() {
+  const list = document.getElementById('preset-list');
+  const presets = getPresets();
+  if (!presets.length) {
+    list.innerHTML = '<span style="color:var(--muted);font-size:0.82rem;">No presets saved yet.</span>';
+    return;
+  }
+  list.innerHTML = presets.map(p => `
+    <div style="display:inline-flex;align-items:center;gap:0;background:var(--surface2);border:1px solid var(--border);border-radius:20px;overflow:hidden;">
+      <button onclick="loadPreset(${JSON.stringify(p.name)})"
+        style="background:none;border:none;color:var(--text);padding:6px 14px;cursor:pointer;font-size:0.82rem;font-weight:600;white-space:nowrap;"
+        title="${escHtml(p.voice_name)} · ${escHtml(p.model_id)}">${escHtml(p.name)}</button>
+      <button onclick="deletePreset(${JSON.stringify(p.name)})"
+        style="background:none;border:none;border-left:1px solid var(--border);color:var(--muted);padding:6px 10px;cursor:pointer;font-size:0.75rem;">✕</button>
+    </div>`).join('');
+}
+
+function loadVoiceSettings() {
+  const raw = localStorage.getItem(LAST_KEY);
+  if (!raw) return null;
+  try { const s = JSON.parse(raw); applySettings(s); return s; } catch(e) { return null; }
+}
+
+function updateRangeLabel(inputId, labelId, suffix='') {
+  const el = document.getElementById(inputId);
+  const lbl = document.getElementById(labelId);
+  lbl.textContent = parseFloat(el.value).toFixed(2) + suffix;
+  el.addEventListener('input', () => lbl.textContent = parseFloat(el.value).toFixed(2) + suffix);
+}
+updateRangeLabel('speed', 'speed-val', '×');
+updateRangeLabel('stability', 'stability-val');
+updateRangeLabel('similarity', 'similarity-val');
+updateRangeLabel('style', 'style-val');
+
+// Load saved settings on page init
+loadVoiceSettings();
+renderPresets();
+
+document.getElementById('btn-load-voices').addEventListener('click', async () => {
+  const key = document.getElementById('api-key').value.trim();
+  if (!key) { showAlert('alert-voice', 'Enter your API key first.'); return; }
+  const btn = document.getElementById('btn-load-voices');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  showAlert('alert-voice', '');
+
+  try {
+    const [voicesRes, modelsRes] = await Promise.all([
+      fetch('/api/voices?api_key='+encodeURIComponent(key)),
+      fetch('/api/models?api_key='+encodeURIComponent(key)),
+    ]);
+    const voices = await voicesRes.json();
+    const models = await modelsRes.json();
+
+    if (voices.error) { showAlert('alert-voice', 'API error: ' + voices.error); return; }
+
+    const voiceSel = document.getElementById('voice-select');
+    voiceSel.innerHTML = voices.map(v => `<option value="${v.voice_id}">${escHtml(v.name)} (${v.category||''})</option>`).join('');
+
+    if (!models.error) {
+      const modelSel = document.getElementById('model-select');
+      modelSel.innerHTML = models.map(m => `<option value="${m.model_id}">${escHtml(m.name)}</option>`).join('');
+    }
+
+    // Restore saved voice + model selection
+    const saved = JSON.parse(localStorage.getItem(LAST_KEY) || '{}');
+    if (saved.voice_id) voiceSel.value = saved.voice_id;
+    if (saved.model_id && !models.error) document.getElementById('model-select').value = saved.model_id;
+
+    showAlert('alert-voice', `Loaded ${voices.length} voices.`, 'success');
+  } catch(e) {
+    showAlert('alert-voice', 'Failed to load voices: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Load Voices';
+  }
+});
+
+// Step 3: just save settings and proceed — no auto-generate
+document.getElementById('btn-proceed-to-generate').addEventListener('click', async () => {
+  const apiKey = document.getElementById('api-key').value.trim();
+  const voiceId = document.getElementById('voice-select').value;
+  if (!apiKey) { showAlert('alert-voice', 'Enter your ElevenLabs API key.'); return; }
+  if (!voiceId) { showAlert('alert-voice', 'Select a voice.'); return; }
+  localStorage.setItem(LAST_KEY, JSON.stringify(currentSettings()));
+  await loadGenerateStep();
+  goToStep(4);
+});
+
+// ── Generate step ──
+function ttsParams() {
+  const s = currentSettings();
+  return {
+    api_key:          s.api_key,
+    voice_id:         s.voice_id,
+    model_id:         s.model_id,
+    speed:            parseFloat(s.speed),
+    stability:        parseFloat(s.stability),
+    similarity_boost: parseFloat(s.similarity),
+    style:            parseFloat(s.style),
+  };
+}
+
+// ── Cost calculator ──
+const MODEL_PRICES = {
+  'eleven_v3':               0.40,
+  'eleven_multilingual_v2':  0.30,
+  'eleven_monolingual_v1':   0.30,
+  'eleven_turbo_v2_5':       0.15,
+  'eleven_flash_v2_5':       0.08,
+};
+
+let _genChaptersCache = [];
+
+function chapterCost(charCount) {
+  const rate = parseFloat(document.getElementById('cost-per-1k').value) || 0;
+  return (charCount / 1000) * rate;
+}
+
+function recalcCosts() {
+  if (!_genChaptersCache.length) return;
+  const chapters = _genChaptersCache;
+  const totalChars = chapters.reduce((s, c) => s + (c.char_count || 0), 0);
+  const pendingChars = chapters
+    .filter(c => c.status === 'pending' || c.status === 'error')
+    .reduce((s, c) => s + (c.char_count || 0), 0);
+  const allCost = chapterCost(totalChars);
+  const pendingCost = chapterCost(pendingChars);
+
+  document.getElementById('cost-total-chars').textContent =
+    totalChars.toLocaleString();
+  document.getElementById('cost-pending-total').textContent =
+    '$' + pendingCost.toFixed(4);
+  document.getElementById('cost-all-total').textContent =
+    '$' + allCost.toFixed(4);
+
+  // Update per-chapter cost badges
+  chapters.forEach(ch => {
+    const el = document.getElementById('cost-ch-'+ch.id);
+    if (el) el.textContent = '$' + chapterCost(ch.char_count || 0).toFixed(4);
+  });
+}
+
+// Auto-fill price when model changes
+document.getElementById('model-select').addEventListener('change', function() {
+  const price = MODEL_PRICES[this.value];
+  if (price != null) document.getElementById('cost-per-1k').value = price;
+  recalcCosts();
+});
+
+async function loadGenerateStep() {
+  // Sync cost-per-1k with currently selected model
+  const modelId = document.getElementById('model-select').value;
+  const savedPrice = MODEL_PRICES[modelId];
+  if (savedPrice != null) document.getElementById('cost-per-1k').value = savedPrice;
+
+  const res = await fetch('/api/books/'+currentBookId+'/chapters');
+  const chapters = await res.json();
+  _genChaptersCache = chapters;
+  renderGenerateList(chapters);
+  updateGenSummary(chapters);
+  recalcCosts();
+  ensureSSE(currentBookId);
+}
+
+function renderGenerateList(chapters) {
+  const list = document.getElementById('gen-chapter-list');
+  list.innerHTML = chapters.map(ch => {
+    const isGenerating = ch.status === 'generating';
+    const isDone = ch.status === 'done';
+    return `
+    <div class="chapter-row" id="gen-ch-${ch.id}" style="grid-template-columns:36px 1fr auto auto auto auto;">
+      <span class="num">${ch.chapter_number}</span>
+      <span style="font-size:0.9rem;">${escHtml(ch.title)}</span>
+      <span class="chars">${fmt(ch.char_count)} chars</span>
+      <span id="cost-ch-${ch.id}" style="font-size:0.78rem;color:var(--accent2);white-space:nowrap;">
+        $${chapterCost(ch.char_count || 0).toFixed(4)}
+      </span>
+      <span class="status-badge badge-${ch.status}" id="gen-ch-status-${ch.id}">${ch.status}</span>
+      <button class="btn btn-secondary btn-sm" id="gen-ch-btn-${ch.id}"
+        onclick="generateOne(${ch.id})"
+        ${isGenerating ? 'disabled' : ''}
+        style="${isGenerating ? 'opacity:0.4;' : ''}">
+        ${isDone ? '↺ Re-gen' : isGenerating ? '…' : 'Generate'}
+      </button>
+    </div>`;
+  }).join('');
+}
+
+function updateGenSummary(chapters) {
+  const done  = chapters.filter(c => c.status === 'done').length;
+  const total = chapters.length;
+  const pending = chapters.filter(c => c.status === 'pending' || c.status === 'error').length;
+  document.getElementById('gen-summary').textContent =
+    `${done} / ${total} done · ${pending} remaining`;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('gen-progress-bar').style.width = pct + '%';
+  document.getElementById('gen-progress-pct').textContent = pct > 0 ? pct + '%' : '';
+  document.getElementById('gen-progress-label').textContent = '';
+  const dlBtn = document.getElementById('btn-go-download');
+  dlBtn.style.display = done > 0 ? '' : 'none';
+}
+
+async function generateOne(chapterId) {
+  const btn = document.getElementById('gen-ch-btn-'+chapterId);
+  const badge = document.getElementById('gen-ch-status-'+chapterId);
+  btn.disabled = true; btn.textContent = '…';
+  badge.textContent = 'generating…'; badge.className = 'status-badge badge-generating';
+
+  const res = await fetch('/api/chapters/'+chapterId+'/generate', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(ttsParams()),
+  });
+  const data = await res.json();
+  if (data.error) {
+    badge.textContent = 'error'; badge.className = 'status-badge badge-error';
+    btn.disabled = false; btn.textContent = 'Retry';
+    showAlert('alert-generate', data.error);
+  }
+  // SSE will update the badge and button when done
+}
+
+document.getElementById('btn-test-voice').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-test-voice');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Generating…';
+  showAlert('alert-generate', '');
+
+  try {
+    const res = await fetch('/api/books/'+currentBookId+'/test-voice', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(ttsParams()),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      showAlert('alert-generate', 'Test failed: ' + (err.error || res.statusText));
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = document.getElementById('test-audio');
+    audio.src = url;
+    document.getElementById('test-voice-player').style.display = '';
+    audio.play();
+  } catch(e) {
+    showAlert('alert-generate', 'Test failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate Test';
+  }
+});
+
+document.getElementById('btn-generate-all-remaining').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-generate-all-remaining');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Queuing…';
+  showAlert('alert-generate', '');
+
+  const res = await fetch('/api/books/'+currentBookId+'/generate', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(ttsParams()),
+  });
+  const data = await res.json();
+  btn.disabled = false; btn.textContent = '⚡ Generate All Remaining';
+
+  if (data.error) { showAlert('alert-generate', data.error); return; }
+  document.getElementById('gen-progress-label').textContent =
+    `Generating ${data.queued} chapters…`;
+});
+
+document.getElementById('btn-go-download').addEventListener('click', async () => {
+  await loadDownloadStep(); goToStep(5);
+});
+
+function ensureSSE(bookId) {
+  if (sseSource) { sseSource.close(); }
+  sseSource = new EventSource('/api/books/'+bookId+'/events');
+
+  sseSource.onmessage = async (e) => {
+    const ev = JSON.parse(e.data);
+
+    if (ev.type === 'chapter_start') {
+      const badge = document.getElementById('gen-ch-status-'+ev.data.chapter_id);
+      const btn   = document.getElementById('gen-ch-btn-'+ev.data.chapter_id);
+      if (badge) { badge.textContent = 'generating…'; badge.className = 'status-badge badge-generating'; }
+      if (btn)   { btn.disabled = true; btn.textContent = '…'; }
+      document.getElementById('gen-progress-label').textContent =
+        `Generating: ${ev.data.title} (${ev.data.index+1}/${ev.data.total})`;
+    }
+    else if (ev.type === 'chapter_done') {
+      const badge = document.getElementById('gen-ch-status-'+ev.data.chapter_id);
+      const btn   = document.getElementById('gen-ch-btn-'+ev.data.chapter_id);
+      if (badge) { badge.textContent = 'done'; badge.className = 'status-badge badge-done'; }
+      if (btn)   { btn.disabled = false; btn.textContent = '↺ Re-gen'; }
+      refreshGenSummary();
+    }
+    else if (ev.type === 'chapter_error') {
+      const badge = document.getElementById('gen-ch-status-'+ev.data.chapter_id);
+      const btn   = document.getElementById('gen-ch-btn-'+ev.data.chapter_id);
+      if (badge) { badge.textContent = 'error'; badge.className = 'status-badge badge-error'; }
+      if (btn)   { btn.disabled = false; btn.textContent = 'Retry'; }
+      refreshGenSummary();
+    }
+    else if (ev.type === 'batch_complete') {
+      document.getElementById('gen-progress-label').textContent =
+        ev.data.all_done ? 'All chapters done!' : 'Batch finished.';
+      refreshGenSummary();
+    }
+  };
+
+  sseSource.onerror = () => {};  // silently reconnect
+}
+
+async function refreshGenSummary() {
+  const res = await fetch('/api/books/'+currentBookId+'/chapters');
+  const chapters = await res.json();
+  _genChaptersCache = chapters;
+  updateGenSummary(chapters);
+  recalcCosts();
+}
+
+function updateGenProgress(done, total) {
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('gen-progress-bar').style.width = pct + '%';
+  document.getElementById('gen-progress-pct').textContent = pct > 0 ? pct + '%' : '';
+}
+
+// ── Download ──
+async function loadDownloadStep() {
+  const res = await fetch('/api/books/'+currentBookId+'/chapters');
+  const chapters = await res.json();
+  const list = document.getElementById('download-list');
+  list.innerHTML = chapters.map(ch => {
+    const hasDl = ch.has_audio;
+    return `
+    <div class="dl-row">
+      <span class="num">${ch.chapter_number}</span>
+      <span class="dl-title">${escHtml(ch.title)}</span>
+      <span class="dl-status" style="color:${hasDl ? 'var(--success)' : 'var(--error)'};">
+        ${hasDl ? '✓ ready' : (ch.status === 'error' ? '✗ error' : '…pending')}
+      </span>
+      ${hasDl ? `<a href="/api/chapters/${ch.id}/download" class="btn btn-secondary btn-sm">⬇ MP3</a>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('btn-download-all').onclick = () => {
+    window.location.href = '/api/books/'+currentBookId+'/download-all';
+  };
+}
+
+document.getElementById('btn-new-book').addEventListener('click', () => {
+  currentBookId = null;
+  chaptersData = [];
+  if (sseSource) sseSource.close();
+  document.getElementById('file-input').value = '';
+  document.getElementById('upload-status').classList.add('hidden');
+  showAlert('alert-global', '');
+  loadRecentBooks();
+  goToStep(1);
+});
+
+// ── Init ──
+loadRecentBooks();
+goToStep(1);
+</script>
+</body>
+</html>
