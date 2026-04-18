@@ -1,0 +1,17 @@
+services:
+  audiobook-generator:
+    build: .
+    image: audiobook-generator:latest
+    container_name: audiobook-generator
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8000"
+    volumes:
+      - audiobook_data:/data
+    environment:
+      DATA_DIR: /data
+      PYTHONUNBUFFERED: "1"
+
+volumes:
+  audiobook_data:
+    driver: local

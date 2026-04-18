@@ -45,6 +45,8 @@ class Chapter(db.Model):
     error_msg = db.Column(db.Text)
     voice_id = db.Column(db.String(200))
     model_id = db.Column(db.String(200))
+    acx_rms_db = db.Column(db.Float, nullable=True)
+    acx_peak_db = db.Column(db.Float, nullable=True)
     book = db.relationship("Book", back_populates="chapters")
 
     def to_dict(self):
@@ -58,4 +60,6 @@ class Chapter(db.Model):
             "status": self.status,
             "has_audio": bool(self.output_path),
             "error_msg": self.error_msg,
+            "acx_rms_db": self.acx_rms_db,
+            "acx_peak_db": self.acx_peak_db,
         }

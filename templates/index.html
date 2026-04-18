@@ -461,27 +461,26 @@ async function handleFile(file) {
 }
 
 async function waitForParsed(bookId) {
-  return new Promise((resolve) => {
-    const es = new EventSource('/api/books/'+bookId+'/events');
-    es.onmessage = async (e) => {
-      const ev = JSON.parse(e.data);
-      if (ev.type === 'parsed') {
-        es.close();
+  // Poll the book status — avoids the race where parsing finishes before SSE connects
+  for (let attempts = 0; attempts < 60; attempts++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const res = await fetch('/api/books/' + bookId);
+      const book = await res.json();
+      if (book.status === 'parsed' || book.status === 'confirmed') {
         document.getElementById('upload-progress').style.width = '100%';
-        document.getElementById('upload-msg').textContent = `Found ${ev.data.chapter_count} chapters!`;
-        setTimeout(async () => {
-          await loadChaptersStep();
-          goToStep(2);
-        }, 600);
-        resolve();
-      } else if (ev.type === 'error') {
-        es.close();
-        showAlert('alert-global', 'Parse error: ' + ev.data.message);
-        resolve();
+        document.getElementById('upload-msg').textContent = `Found ${book.chapter_count} chapters!`;
+        await new Promise(r => setTimeout(r, 400));
+        await loadChaptersStep();
+        goToStep(2);
+        return;
+      } else if (book.status === 'error') {
+        showAlert('alert-global', 'Parse error — check the file and try again.');
+        return;
       }
-    };
-    es.onerror = () => { es.close(); showAlert('alert-global', 'Connection error during parsing.'); resolve(); };
-  });
+    } catch (e) { /* ignore transient fetch errors */ }
+  }
+  showAlert('alert-global', 'Parsing timed out. Please try again.');
 }
 
 // ── Chapters ──
@@ -767,12 +766,20 @@ function renderGenerateList(chapters) {
     const isGenerating = ch.status === 'generating';
     const isDone = ch.status === 'done';
     return `
-    <div class="chapter-row" id="gen-ch-${ch.id}" style="grid-template-columns:36px 1fr auto auto auto auto;">
+    <div class="chapter-row" id="gen-ch-${ch.id}" style="grid-template-columns:36px 1fr auto auto auto auto auto;">
       <span class="num">${ch.chapter_number}</span>
       <span style="font-size:0.9rem;">${escHtml(ch.title)}</span>
       <span class="chars">${fmt(ch.char_count)} chars</span>
       <span id="cost-ch-${ch.id}" style="font-size:0.78rem;color:var(--accent2);white-space:nowrap;">
         $${chapterCost(ch.char_count || 0).toFixed(4)}
+      </span>
+      <span id="acx-ch-${ch.id}" style="font-size:0.72rem;white-space:nowrap;${
+        ch.acx_rms_db != null
+          ? (ch.acx_rms_db >= -23 && ch.acx_rms_db <= -18 && ch.acx_peak_db <= -3
+              ? 'color:var(--success);' : 'color:var(--error);')
+          : 'color:var(--muted);'
+      }">
+        ${ch.acx_rms_db != null ? `RMS ${ch.acx_rms_db.toFixed(1)} / Peak ${ch.acx_peak_db.toFixed(1)}` : ''}
       </span>
       <span class="status-badge badge-${ch.status}" id="gen-ch-status-${ch.id}">${ch.status}</span>
       <button class="btn btn-secondary btn-sm" id="gen-ch-btn-${ch.id}"
@@ -885,10 +892,18 @@ function ensureSSE(bookId) {
         `Generating: ${ev.data.title} (${ev.data.index+1}/${ev.data.total})`;
     }
     else if (ev.type === 'chapter_done') {
-      const badge = document.getElementById('gen-ch-status-'+ev.data.chapter_id);
-      const btn   = document.getElementById('gen-ch-btn-'+ev.data.chapter_id);
+      const badge  = document.getElementById('gen-ch-status-'+ev.data.chapter_id);
+      const btn    = document.getElementById('gen-ch-btn-'+ev.data.chapter_id);
+      const acxSpan = document.getElementById('acx-ch-'+ev.data.chapter_id);
       if (badge) { badge.textContent = 'done'; badge.className = 'status-badge badge-done'; }
       if (btn)   { btn.disabled = false; btn.textContent = '↺ Re-gen'; }
+      if (acxSpan && ev.data.acx) {
+        const rms  = ev.data.acx.rms_db.toFixed(1);
+        const peak = ev.data.acx.peak_db.toFixed(1);
+        const ok   = ev.data.acx.rms_db >= -23 && ev.data.acx.rms_db <= -18 && ev.data.acx.peak_db <= -3;
+        acxSpan.textContent = `RMS ${rms} / Peak ${peak}`;
+        acxSpan.style.color = ok ? 'var(--success)' : 'var(--error)';
+      }
       refreshGenSummary();
     }
     else if (ev.type === 'chapter_error') {

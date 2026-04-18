@@ -20,7 +20,8 @@ from models import Book, Chapter, db
 from parsers import pdf_parser, epub_parser, docx_parser
 
 BASE_DIR = Path(__file__).parent
-DATA_DIR = Path.home() / "Library" / "Application Support" / "AudiobookGenerator"
+_default_data_dir = Path.home() / "Library" / "Application Support" / "AudiobookGenerator"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(_default_data_dir)))
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "output"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -311,7 +312,7 @@ def _generate_chapters_list(flask_app, book_id: int, chapter_ids: list, params: 
                         voice_id=params["voice_id"],
                         model_id=params["model_id"],
                         voice_settings=voice_settings,
-                        output_format="mp3_44100_128",
+                        output_format="mp3_44100_192",
                     )
                     audio_chunks.append(b"".join(audio))
 
@@ -323,9 +324,14 @@ def _generate_chapters_list(flask_app, book_id: int, chapter_ids: list, params: 
                 out_path = out_dir / f"{chapter.chapter_number:03d}_{safe_title}.mp3"
                 out_path.write_bytes(combined)
 
+                acx_stats = _normalize_acx(out_path)
+
                 chapter.status = "done"
                 chapter.output_path = str(out_path)
                 chapter.error_msg = None
+                if acx_stats:
+                    chapter.acx_rms_db = acx_stats["rms_db"]
+                    chapter.acx_peak_db = acx_stats["peak_db"]
                 db.session.commit()
 
                 push_event(book_id, "chapter_done", {
@@ -334,6 +340,7 @@ def _generate_chapters_list(flask_app, book_id: int, chapter_ids: list, params: 
                     "title": chapter.title,
                     "index": idx,
                     "total": total,
+                    "acx": acx_stats,
                 })
 
             except Exception as e:
@@ -386,6 +393,43 @@ def _chunk_text(text: str, max_chars: int = 4800) -> list[str]:
         text = text[boundary:]
 
     return [c for c in chunks if c.strip()]
+
+
+def _normalize_acx(path: Path) -> dict | None:
+    """Normalize an MP3 to ACX standards: -20 dB RMS target, peak ≤ -3 dBFS, 192 kbps 44.1 kHz.
+    Returns {"rms_db": float, "peak_db": float} or None on failure."""
+    try:
+        from pydub import AudioSegment
+
+        audio = AudioSegment.from_mp3(str(path))
+
+        # Guard: silent or near-silent audio — skip normalization
+        if audio.dBFS < -60:
+            return {"rms_db": round(audio.dBFS, 1), "peak_db": round(audio.max_dBFS, 1)}
+
+        TARGET_RMS_DB = -20.0
+        PEAK_LIMIT_DB = -3.0
+
+        gain_db = TARGET_RMS_DB - audio.dBFS
+        normalized = audio.apply_gain(gain_db)
+
+        # Back off gain if peak would clip above -3 dBFS
+        if normalized.max_dBFS > PEAK_LIMIT_DB:
+            gain_db -= (normalized.max_dBFS - PEAK_LIMIT_DB)
+            normalized = audio.apply_gain(gain_db)
+
+        normalized.export(
+            str(path),
+            format="mp3",
+            bitrate="192k",
+            parameters=["-ar", "44100"],
+        )
+
+        return {"rms_db": round(normalized.dBFS, 1), "peak_db": round(normalized.max_dBFS, 1)}
+
+    except Exception as e:
+        print(f"[ACX normalize] warning: {e}")
+        return None
 
 
 def _safe_filename(name: str) -> str:
@@ -455,9 +499,22 @@ def test_voice(book_id):
             voice_id=params["voice_id"],
             model_id=params["model_id"],
             voice_settings=voice_settings,
-            output_format="mp3_44100_128",
+            output_format="mp3_44100_192",
         )
         audio_bytes = b"".join(audio)
+
+        # Normalize to ACX standard via temp file
+        import tempfile, os as _os
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
+            tmp_path = Path(tf.name)
+        try:
+            tmp_path.write_bytes(audio_bytes)
+            _normalize_acx(tmp_path)
+            audio_bytes = tmp_path.read_bytes()
+        finally:
+            try: _os.unlink(tmp_path)
+            except Exception: pass
+
         return send_file(io.BytesIO(audio_bytes), mimetype="audio/mpeg")
     except Exception as e:
         return jsonify({"error": str(e)}), 400
