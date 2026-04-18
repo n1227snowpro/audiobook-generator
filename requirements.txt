@@ -10,3 +10,4 @@ lxml>=5.0.0
 pydub>=0.25.1
 # MySQL support (used when DATABASE_URL env var is set)
 PyMySQL>=1.1.0
+cryptography>=42.0.0
