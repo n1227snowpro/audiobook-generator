@@ -8,5 +8,5 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0
 # pydub requires ffmpeg: brew install ffmpeg
 pydub>=0.25.1
-# PostgreSQL support (used when DATABASE_URL env var is set)
-psycopg2-binary>=2.9.0
+# MySQL support (used when DATABASE_URL env var is set)
+PyMySQL>=1.1.0

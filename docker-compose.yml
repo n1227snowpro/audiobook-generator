@@ -4,6 +4,9 @@ services:
     image: audiobook-generator:latest
     container_name: audiobook-generator
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     networks:
       - n8n_default
       - default
@@ -12,7 +15,7 @@ services:
     environment:
       DATA_DIR: /data
       PYTHONUNBUFFERED: "1"
-      DATABASE_URL: ${DATABASE_URL:-}  # Set to PostgreSQL URL for cloud DB (e.g. Supabase)
+      DATABASE_URL: mysql+pymysql://audiobook:audiobook_pass@mysql:3306/audiobook
     labels:
       - traefik.enable=true
       - traefik.http.routers.audiobook.rule=Host(`audiobookgenerator.srv1213330.hstgr.cloud`)
@@ -26,6 +29,25 @@ services:
       - traefik.http.routers.audiobook.middlewares=audiobook-headers@docker
       - traefik.docker.network=n8n_default
 
+  mysql:
+    image: mysql:8
+    container_name: audiobook-mysql
+    restart: unless-stopped
+    networks:
+      - default
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass_audiobook
+      MYSQL_DATABASE: audiobook
+      MYSQL_USER: audiobook
+      MYSQL_PASSWORD: audiobook_pass
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 networks:
   n8n_default:
     external: true
@@ -33,4 +55,6 @@ networks:
 
 volumes:
   audiobook_data:
+    driver: local
+  mysql_data:
     driver: local
