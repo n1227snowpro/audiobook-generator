@@ -529,95 +529,115 @@ document.getElementById('btn-back-to-upload').addEventListener('click', () => go
 // ── Voice settings & presets ──
 document.getElementById('btn-back-to-chapters').addEventListener('click', () => goToStep(2));
 
-const PRESETS_KEY = 'audiobook_elevenlabs_presets';
-const LAST_KEY    = 'audiobook_elevenlabs_last';
+// ── Voice settings & presets (stored server-side) ───────────────────────────
+
+// In-memory cache of last loaded settings (voice_id, model_id) for restoring after Load Voices
+let _lastSettings = {};
 
 function currentSettings() {
   return {
-    api_key:    document.getElementById('api-key').value.trim(),
-    voice_id:   document.getElementById('voice-select').value,
-    voice_name: document.getElementById('voice-select').selectedOptions[0]?.text || '',
-    model_id:   document.getElementById('model-select').value,
-    speed:      document.getElementById('speed').value,
-    stability:  document.getElementById('stability').value,
-    similarity: document.getElementById('similarity').value,
-    style:      document.getElementById('style').value,
+    api_key:         document.getElementById('api-key').value.trim(),
+    voice_id:        document.getElementById('voice-select').value,
+    voice_name:      document.getElementById('voice-select').selectedOptions[0]?.text || '',
+    model_id:        document.getElementById('model-select').value,
+    speed:           parseFloat(document.getElementById('speed').value),
+    stability:       parseFloat(document.getElementById('stability').value),
+    similarity_boost: parseFloat(document.getElementById('similarity').value),
+    style:           parseFloat(document.getElementById('style').value),
   };
 }
 
 function applySettings(s) {
-  if (s.api_key)            document.getElementById('api-key').value = s.api_key;
-  if (s.speed != null)      document.getElementById('speed').value = s.speed;
-  if (s.stability != null)  document.getElementById('stability').value = s.stability;
-  if (s.similarity != null) document.getElementById('similarity').value = s.similarity;
-  if (s.style != null)      document.getElementById('style').value = s.style;
-  // voice_id + model_id applied after voices are loaded
-  ['speed','stability','similarity','style'].forEach(id => {
-    document.getElementById(id).dispatchEvent(new Event('input'));
-  });
+  if (s.api_key)             document.getElementById('api-key').value = s.api_key;
+  if (s.speed != null)       document.getElementById('speed').value = s.speed;
+  if (s.stability != null)   document.getElementById('stability').value = s.stability;
+  if (s.similarity_boost != null) document.getElementById('similarity').value = s.similarity_boost;
+  if (s.style != null)       document.getElementById('style').value = s.style;
+  ['speed','stability','similarity','style'].forEach(id =>
+    document.getElementById(id).dispatchEvent(new Event('input')));
+  // Cache voice/model for post-Load-Voices restore
+  if (s.voice_id)  _lastSettings.voice_id  = s.voice_id;
+  if (s.model_id)  _lastSettings.model_id  = s.model_id;
 }
 
-function getPresets() {
-  try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); } catch(e) { return []; }
-}
-function setPresets(list) { localStorage.setItem(PRESETS_KEY, JSON.stringify(list)); }
-
-function savePreset() {
+async function savePreset() {
   const name = document.getElementById('preset-name').value.trim();
   if (!name) { showAlert('alert-voice', 'Enter a preset name first.'); return; }
-  const presets = getPresets();
-  const existing = presets.findIndex(p => p.name === name);
-  const entry = { name, ...currentSettings(), saved_at: new Date().toISOString() };
-  if (existing >= 0) presets[existing] = entry;
-  else presets.push(entry);
-  setPresets(presets);
-  localStorage.setItem(LAST_KEY, JSON.stringify(currentSettings()));
+  const res = await fetch('/api/presets', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name, ...currentSettings() }),
+  });
+  const data = await res.json();
+  if (data.error) { showAlert('alert-voice', data.error); return; }
   document.getElementById('preset-name').value = '';
-  renderPresets();
+  await renderPresets();
   showAlert('alert-voice', `Preset "${name}" saved.`, 'success');
   setTimeout(() => showAlert('alert-voice', ''), 2000);
 }
 
-function loadPreset(name) {
-  const preset = getPresets().find(p => p.name === name);
-  if (!preset) return;
-  applySettings(preset);
-  localStorage.setItem(LAST_KEY, JSON.stringify(preset));
-  // If voices already loaded, restore selection
+async function loadPreset(presetObj) {
+  applySettings(presetObj);
+  // Restore voice + model if voices already loaded
   const voiceSel = document.getElementById('voice-select');
-  if (voiceSel.options.length > 1 && preset.voice_id) voiceSel.value = preset.voice_id;
-  if (preset.model_id) document.getElementById('model-select').value = preset.model_id;
-  showAlert('alert-voice', `Loaded preset "${name}".`, 'success');
+  if (voiceSel.options.length > 1 && presetObj.voice_id) voiceSel.value = presetObj.voice_id;
+  if (presetObj.model_id) document.getElementById('model-select').value = presetObj.model_id;
+  // Auto-save as last-used settings
+  await fetch('/api/settings', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      last_api_key: presetObj.api_key,
+      last_voice_id: presetObj.voice_id,
+      last_model_id: presetObj.model_id,
+    }),
+  });
+  showAlert('alert-voice', `Loaded preset "${presetObj.name}".`, 'success');
   setTimeout(() => showAlert('alert-voice', ''), 2000);
 }
 
-function deletePreset(name) {
-  const presets = getPresets().filter(p => p.name !== name);
-  setPresets(presets);
-  renderPresets();
+async function deletePreset(id, name) {
+  if (!confirm(`Delete preset "${name}"?`)) return;
+  await fetch('/api/presets/' + id, { method: 'DELETE' });
+  await renderPresets();
 }
 
-function renderPresets() {
+async function renderPresets() {
   const list = document.getElementById('preset-list');
-  const presets = getPresets();
-  if (!presets.length) {
-    list.innerHTML = '<span style="color:var(--muted);font-size:0.82rem;">No presets saved yet.</span>';
-    return;
+  list.innerHTML = '<span style="color:var(--muted);font-size:0.82rem;">Loading…</span>';
+  try {
+    const presets = await fetch('/api/presets').then(r => r.json());
+    if (!presets.length) {
+      list.innerHTML = '<span style="color:var(--muted);font-size:0.82rem;">No presets saved yet.</span>';
+      return;
+    }
+    list.innerHTML = presets.map(p => `
+      <div style="display:inline-flex;align-items:center;gap:0;background:var(--surface2);border:1px solid var(--border);border-radius:20px;overflow:hidden;">
+        <button onclick="loadPreset(${JSON.stringify(p)})"
+          style="background:none;border:none;color:var(--text);padding:6px 14px;cursor:pointer;font-size:0.82rem;font-weight:600;white-space:nowrap;"
+          title="${escHtml(p.voice_name||'')} · ${escHtml(p.model_id||'')}">${escHtml(p.name)}</button>
+        <button onclick="deletePreset(${p.id}, ${JSON.stringify(p.name)})"
+          style="background:none;border:none;border-left:1px solid var(--border);color:var(--muted);padding:6px 10px;cursor:pointer;font-size:0.75rem;">✕</button>
+      </div>`).join('');
+  } catch(e) {
+    list.innerHTML = '<span style="color:var(--muted);font-size:0.82rem;">Could not load presets.</span>';
   }
-  list.innerHTML = presets.map(p => `
-    <div style="display:inline-flex;align-items:center;gap:0;background:var(--surface2);border:1px solid var(--border);border-radius:20px;overflow:hidden;">
-      <button onclick="loadPreset(${JSON.stringify(p.name)})"
-        style="background:none;border:none;color:var(--text);padding:6px 14px;cursor:pointer;font-size:0.82rem;font-weight:600;white-space:nowrap;"
-        title="${escHtml(p.voice_name)} · ${escHtml(p.model_id)}">${escHtml(p.name)}</button>
-      <button onclick="deletePreset(${JSON.stringify(p.name)})"
-        style="background:none;border:none;border-left:1px solid var(--border);color:var(--muted);padding:6px 10px;cursor:pointer;font-size:0.75rem;">✕</button>
-    </div>`).join('');
 }
 
-function loadVoiceSettings() {
-  const raw = localStorage.getItem(LAST_KEY);
-  if (!raw) return null;
-  try { const s = JSON.parse(raw); applySettings(s); return s; } catch(e) { return null; }
+async function loadVoiceSettings() {
+  try {
+    const settings = await fetch('/api/settings').then(r => r.json());
+    if (settings.last_api_key)  document.getElementById('api-key').value = settings.last_api_key;
+    if (settings.last_voice_id) _lastSettings.voice_id = settings.last_voice_id;
+    if (settings.last_model_id) _lastSettings.model_id = settings.last_model_id;
+    // Restore sliders from last preset if stored
+    if (settings.last_speed)      { document.getElementById('speed').value = settings.last_speed; }
+    if (settings.last_stability)  { document.getElementById('stability').value = settings.last_stability; }
+    if (settings.last_similarity) { document.getElementById('similarity').value = settings.last_similarity; }
+    if (settings.last_style)      { document.getElementById('style').value = settings.last_style; }
+    ['speed','stability','similarity','style'].forEach(id =>
+      document.getElementById(id).dispatchEvent(new Event('input')));
+  } catch(e) { /* silently skip if server not available */ }
 }
 
 function updateRangeLabel(inputId, labelId, suffix='') {
@@ -631,9 +651,8 @@ updateRangeLabel('stability', 'stability-val');
 updateRangeLabel('similarity', 'similarity-val');
 updateRangeLabel('style', 'style-val');
 
-// Load saved settings on page init
-loadVoiceSettings();
-renderPresets();
+// Load saved settings and presets from server on page init
+(async () => { await loadVoiceSettings(); await renderPresets(); })();
 
 document.getElementById('btn-load-voices').addEventListener('click', async () => {
   const key = document.getElementById('api-key').value.trim();
@@ -661,9 +680,15 @@ document.getElementById('btn-load-voices').addEventListener('click', async () =>
     }
 
     // Restore saved voice + model selection
-    const saved = JSON.parse(localStorage.getItem(LAST_KEY) || '{}');
-    if (saved.voice_id) voiceSel.value = saved.voice_id;
-    if (saved.model_id && !models.error) document.getElementById('model-select').value = saved.model_id;
+    if (_lastSettings.voice_id) voiceSel.value = _lastSettings.voice_id;
+    if (_lastSettings.model_id && !models.error) document.getElementById('model-select').value = _lastSettings.model_id;
+
+    // Auto-save API key to server so it persists across sessions
+    fetch('/api/settings', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ last_api_key: key }),
+    });
 
     showAlert('alert-voice', `Loaded ${voices.length} voices.`, 'success');
   } catch(e) {

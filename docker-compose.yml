@@ -12,6 +12,7 @@ services:
     environment:
       DATA_DIR: /data
       PYTHONUNBUFFERED: "1"
+      DATABASE_URL: ${DATABASE_URL:-}  # Set to PostgreSQL URL for cloud DB (e.g. Supabase)
     labels:
       - traefik.enable=true
       - traefik.http.routers.audiobook.rule=Host(`audiobookgenerator.srv1213330.hstgr.cloud`)

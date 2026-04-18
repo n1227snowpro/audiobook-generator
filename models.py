@@ -63,3 +63,40 @@ class Chapter(db.Model):
             "acx_rms_db": self.acx_rms_db,
             "acx_peak_db": self.acx_peak_db,
         }
+
+
+class Preset(db.Model):
+    __tablename__ = "presets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False, unique=True)
+    api_key = db.Column(db.Text)
+    voice_id = db.Column(db.String(200))
+    voice_name = db.Column(db.String(200))
+    model_id = db.Column(db.String(200))
+    speed = db.Column(db.Float, default=1.0)
+    stability = db.Column(db.Float, default=0.5)
+    similarity_boost = db.Column(db.Float, default=0.75)
+    style = db.Column(db.Float, default=0.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "api_key": self.api_key or "",
+            "voice_id": self.voice_id or "",
+            "voice_name": self.voice_name or "",
+            "model_id": self.model_id or "eleven_multilingual_v2",
+            "speed": self.speed,
+            "stability": self.stability,
+            "similarity_boost": self.similarity_boost,
+            "style": self.style,
+        }
+
+
+class Setting(db.Model):
+    __tablename__ = "settings"
+
+    key = db.Column(db.String(200), primary_key=True)
+    value = db.Column(db.Text)

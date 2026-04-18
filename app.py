@@ -16,7 +16,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
-from models import Book, Chapter, db
+from models import Book, Chapter, Preset, Setting, db
 from parsers import pdf_parser, epub_parser, docx_parser
 
 BASE_DIR = Path(__file__).parent
@@ -29,7 +29,16 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATA_DIR / 'audiobook.db'}"
+
+# Database: use DATABASE_URL env var (PostgreSQL) or fall back to local SQLite
+_db_url = os.environ.get("DATABASE_URL", "")
+if _db_url:
+    if _db_url.startswith("postgres://"):  # Supabase/Heroku use postgres://, SQLAlchemy needs postgresql://
+        _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+    app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
+else:
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATA_DIR / 'audiobook.db'}"
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB
 
@@ -607,6 +616,67 @@ def delete_book(book_id):
     if out_dir.exists():
         shutil.rmtree(out_dir)
     db.session.delete(book)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# ─── Presets ─────────────────────────────────────────────────────────────────
+
+@app.route("/api/presets")
+def list_presets():
+    presets = Preset.query.order_by(Preset.name).all()
+    return jsonify([p.to_dict() for p in presets])
+
+
+@app.route("/api/presets", methods=["POST"])
+def save_preset():
+    data = request.get_json() or {}
+    name = data.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "Preset name required"}), 400
+    preset = Preset.query.filter_by(name=name).first()
+    if not preset:
+        preset = Preset(name=name)
+        db.session.add(preset)
+    preset.api_key = data.get("api_key", "")
+    preset.voice_id = data.get("voice_id", "")
+    preset.voice_name = data.get("voice_name", "")
+    preset.model_id = data.get("model_id", "eleven_multilingual_v2")
+    preset.speed = float(data.get("speed", 1.0))
+    preset.stability = float(data.get("stability", 0.5))
+    preset.similarity_boost = float(data.get("similarity_boost", 0.75))
+    preset.style = float(data.get("style", 0.0))
+    db.session.commit()
+    return jsonify(preset.to_dict())
+
+
+@app.route("/api/presets/<int:preset_id>", methods=["DELETE"])
+def delete_preset(preset_id):
+    preset = db.session.get(Preset, preset_id)
+    if not preset:
+        return jsonify({"error": "Not found"}), 404
+    db.session.delete(preset)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# ─── Settings ────────────────────────────────────────────────────────────────
+
+@app.route("/api/settings")
+def get_settings():
+    rows = Setting.query.all()
+    return jsonify({r.key: r.value for r in rows})
+
+
+@app.route("/api/settings", methods=["PUT"])
+def save_settings():
+    data = request.get_json() or {}
+    for key, value in data.items():
+        row = db.session.get(Setting, key)
+        if row:
+            row.value = str(value)
+        else:
+            db.session.add(Setting(key=key, value=str(value)))
     db.session.commit()
     return jsonify({"ok": True})
 
