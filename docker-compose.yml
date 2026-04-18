@@ -4,13 +4,31 @@ services:
     image: audiobook-generator:latest
     container_name: audiobook-generator
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8082:8000"
+    networks:
+      - n8n_default
+      - default
     volumes:
       - audiobook_data:/data
     environment:
       DATA_DIR: /data
       PYTHONUNBUFFERED: "1"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.audiobook.rule=Host(`audiobookgenerator.srv1213330.hstgr.cloud`)
+      - traefik.http.routers.audiobook.tls=true
+      - traefik.http.routers.audiobook.entrypoints=web,websecure
+      - traefik.http.routers.audiobook.tls.certresolver=mytlschallenge
+      - traefik.http.services.audiobook.loadbalancer.server.port=8000
+      - traefik.http.middlewares.audiobook-headers.headers.SSLRedirect=true
+      - traefik.http.middlewares.audiobook-headers.headers.STSSeconds=315360000
+      - traefik.http.middlewares.audiobook-headers.headers.forceSTSHeader=true
+      - traefik.http.routers.audiobook.middlewares=audiobook-headers@docker
+      - traefik.docker.network=n8n_default
+
+networks:
+  n8n_default:
+    external: true
+  default:
 
 volumes:
   audiobook_data:
