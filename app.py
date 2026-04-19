@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import queue
 import threading
 import time
@@ -537,8 +538,11 @@ def download_chapter(chapter_id):
     path = Path(chapter.output_path)
     if not path.exists():
         return jsonify({"error": "File missing on disk"}), 404
+    safe_title = re.sub(r'[^\w\s\-]', '', chapter.title or f"chapter_{chapter.chapter_number}").strip()
+    safe_title = re.sub(r'\s+', '_', safe_title) or f"chapter_{chapter.chapter_number}"
+    download_name = f"{safe_title}.mp3"
     return send_file(path, mimetype="audio/mpeg", as_attachment=True,
-                     download_name=path.name)
+                     download_name=download_name)
 
 
 @app.route("/api/books/<int:book_id>/download-all")
@@ -555,7 +559,9 @@ def download_all(book_id):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for ch in done_chapters:
             p = Path(ch.output_path)
-            zf.write(p, p.name)
+            safe_ch = re.sub(r'[^\w\s\-]', '', ch.title or f"chapter_{ch.chapter_number}").strip()
+            safe_ch = re.sub(r'\s+', '_', safe_ch) or f"chapter_{ch.chapter_number}"
+            zf.write(p, f"{safe_ch}.mp3")
     buf.seek(0)
 
     safe_title = _safe_filename(book.title or book.original_filename)
