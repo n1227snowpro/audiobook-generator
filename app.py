@@ -409,121 +409,99 @@ def _chunk_text(text: str, max_chars: int = 4800) -> list[str]:
 
 
 def _normalize_acx(path: Path) -> dict | None:
-    """Normalize an MP3 to ACX standards.
-    ACX requirements: RMS -23 to -18 dBFS, peak ≤ -3 dBFS, 192 kbps, 44.1 kHz.
-    We target -20 dB RMS (centre of the window) with a -3 dBFS peak ceiling.
+    """Normalize an MP3 to ACX standards using ffmpeg only (no pydub in-memory decode).
+    ACX: RMS -23 to -18 dBFS, peak ≤ -3 dBFS, 192 kbps, 44.1 kHz.
+    Target: -20 dB RMS (centre of window).
 
-    Strategy:
-      1. Measure input RMS with pydub.
-      2. Run ffmpeg: volume filter → raise to -20 dB RMS target;
-         alimiter → clamp peaks to -3 dBFS without pulling down overall level.
-         Temp file is written to the SAME directory as `path` to avoid
-         cross-device rename failures (Docker /tmp vs /data volume).
-      3. Re-read the actual exported file and measure real RMS/peak.
-      4. If RMS still out of the -23 to -18 window (e.g. heavy peak-limiting
-         pulled it below -23) do one corrective boost pass.
+    All measurement is done via ffmpeg volumedetect/astats — streaming, no RAM spike.
+    All processing is done via ffmpeg volume+alimiter — fast even for long files.
+    Temp files are written to the same directory as `path` (avoids cross-device moves).
     """
     import subprocess, shutil
 
-    ACX_RMS_TARGET = -20.0          # aim for middle of -23 to -18 window
+    ACX_RMS_TARGET = -20.0
     ACX_RMS_LO     = -23.0
     ACX_RMS_HI     = -18.0
     ACX_PEAK       = -3.0
     PEAK_LINEAR     = 10 ** (ACX_PEAK / 20)   # ≈ 0.7079
 
-    def _ffmpeg_normalize(src: Path, dst: Path, extra_gain_db: float = 0.0) -> bool:
-        """Run ffmpeg volume+alimiter chain.  Returns True on success."""
-        try:
-            from pydub import AudioSegment
-            rms = AudioSegment.from_mp3(str(src)).dBFS
-        except Exception:
-            return False
-        gain = ACX_RMS_TARGET - rms + extra_gain_db
+    def _measure(src: Path) -> tuple[float, float]:
+        """Return (mean_volume_db, max_volume_db) via ffmpeg volumedetect.
+        Streaming — never loads the whole file into RAM."""
+        cmd = ["ffmpeg", "-i", str(src),
+               "-filter:a", "volumedetect", "-f", "null", "/dev/null"]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        stderr = r.stderr.decode()
+        mean = max_ = None
+        for line in stderr.splitlines():
+            if "mean_volume:" in line:
+                mean = float(line.split("mean_volume:")[1].split("dB")[0].strip())
+            if "max_volume:" in line:
+                max_ = float(line.split("max_volume:")[1].split("dB")[0].strip())
+        if mean is None or max_ is None:
+            raise ValueError(f"volumedetect failed: {stderr[-300:]}")
+        return mean, max_
+
+    def _apply(src: Path, dst: Path, gain_db: float) -> bool:
+        """Apply gain + peak limiter via ffmpeg. Returns True on success."""
         cmd = [
             "ffmpeg", "-y", "-i", str(src),
             "-filter:a",
-            f"volume={gain:.4f}dB,"
+            f"volume={gain_db:.4f}dB,"
             f"alimiter=limit={PEAK_LINEAR:.6f}:level=false:attack=5:release=50",
             "-codec:a", "libmp3lame", "-b:a", "192k", "-ar", "44100",
             str(dst),
         ]
-        result = subprocess.run(cmd, capture_output=True, timeout=180)
-        if result.returncode != 0:
-            print(f"[ACX] ffmpeg error: {result.stderr.decode()[-300:]}")
-        return result.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+        if r.returncode != 0:
+            print(f"[ACX] ffmpeg apply error: {r.stderr.decode()[-300:]}")
+        return r.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+
+    def _move(src: Path, dst: Path):
+        shutil.move(str(src), str(dst))
 
     try:
-        from pydub import AudioSegment
+        # ── Step 1: measure current RMS/peak ─────────────────────────────
+        rms, peak = _measure(path)
+        print(f"[ACX] {path.name} input: RMS={rms:.1f} dB  Peak={peak:.1f} dB")
 
-        audio = AudioSegment.from_mp3(str(path))
-        if audio.dBFS < -60:
-            # Near-silent — just re-encode to correct bitrate/rate
-            tmp = path.with_suffix(".acx_tmp.mp3")
-            try:
-                cmd = ["ffmpeg", "-y", "-i", str(path),
-                       "-codec:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", str(tmp)]
-                subprocess.run(cmd, capture_output=True, timeout=180)
-                if tmp.exists():
-                    shutil.move(str(tmp), str(path))
-            finally:
-                if tmp.exists():
-                    try: tmp.unlink()
-                    except Exception: pass
-            actual = AudioSegment.from_mp3(str(path))
-            return {"rms_db": round(actual.dBFS, 1), "peak_db": round(actual.max_dBFS, 1)}
+        if rms < -70:
+            print(f"[ACX] near-silent, skipping normalization")
+            return {"rms_db": round(rms, 1), "peak_db": round(peak, 1)}
 
-        # ── Pass 1: volume + alimiter ──────────────────────────────────────
-        tmp = path.with_suffix(".acx_tmp.mp3")   # same dir → no cross-device issue
+        # ── Step 2: raise to -20 dB RMS + limit peaks ────────────────────
+        gain = ACX_RMS_TARGET - rms
+        tmp = path.with_suffix(".acx_tmp.mp3")
         try:
-            ok = _ffmpeg_normalize(path, tmp)
-            if ok:
-                shutil.move(str(tmp), str(path))
+            if _apply(path, tmp, gain):
+                _move(tmp, path)
             else:
-                # ffmpeg unavailable / failed — pure-pydub fallback
-                gain = ACX_RMS_TARGET - audio.dBFS
-                normalized = audio.apply_gain(gain)
-                if normalized.max_dBFS > ACX_PEAK:
-                    gain -= (normalized.max_dBFS - ACX_PEAK)
-                    normalized = audio.apply_gain(gain)
-                normalized.export(str(path), format="mp3", bitrate="192k",
-                                  parameters=["-ar", "44100"])
+                print(f"[ACX] ffmpeg apply failed, file left unchanged")
+                return {"rms_db": round(rms, 1), "peak_db": round(peak, 1)}
         finally:
             if tmp.exists():
                 try: tmp.unlink()
                 except Exception: pass
 
-        # ── Verify actual RMS from the exported file ───────────────────────
-        actual = AudioSegment.from_mp3(str(path))
-        rms = actual.dBFS
+        # ── Step 3: re-measure after normalization ────────────────────────
+        rms2, peak2 = _measure(path)
+        print(f"[ACX] {path.name} pass1: RMS={rms2:.1f} dB  Peak={peak2:.1f} dB")
 
-        # ── Pass 2 (correction): if peak-limiting pulled RMS below floor ───
-        if rms < ACX_RMS_LO:
-            # Peaks are already ≤ -3 dBFS; we can safely boost.
-            # Extra gain = distance to -21 dB (safe centre, 2 dB above floor).
-            extra = -21.0 - rms
+        # ── Step 4: corrective pass if still out of ACX window ───────────
+        if not (ACX_RMS_LO <= rms2 <= ACX_RMS_HI):
+            correction = ACX_RMS_TARGET - rms2
             tmp2 = path.with_suffix(".acx_tmp2.mp3")
             try:
-                ok2 = _ffmpeg_normalize(path, tmp2, extra_gain_db=extra)
-                if ok2:
-                    shutil.move(str(tmp2), str(path))
-                    actual = AudioSegment.from_mp3(str(path))
+                if _apply(path, tmp2, correction):
+                    _move(tmp2, path)
+                    rms2, peak2 = _measure(path)
+                    print(f"[ACX] {path.name} pass2: RMS={rms2:.1f} dB  Peak={peak2:.1f} dB")
             finally:
                 if tmp2.exists():
                     try: tmp2.unlink()
                     except Exception: pass
 
-        # ── Pass 3 (safety ceiling): if somehow still above -18 dB ────────
-        actual = AudioSegment.from_mp3(str(path))
-        if actual.dBFS > ACX_RMS_HI:
-            over = actual.dBFS - (-19.0)
-            normalized = actual.apply_gain(-over)
-            normalized.export(str(path), format="mp3", bitrate="192k",
-                              parameters=["-ar", "44100"])
-            actual = AudioSegment.from_mp3(str(path))
-
-        result = {"rms_db": round(actual.dBFS, 1), "peak_db": round(actual.max_dBFS, 1)}
-        print(f"[ACX] {path.name}: RMS={result['rms_db']} dB  Peak={result['peak_db']} dB")
-        return result
+        return {"rms_db": round(rms2, 1), "peak_db": round(peak2, 1)}
 
     except Exception as e:
         print(f"[ACX normalize] warning: {e}")
