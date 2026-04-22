@@ -21,6 +21,28 @@ def _is_toc_line(text: str) -> bool:
     return bool(TOC_LINE_RE.match(text))
 
 
+# Matches leading list markers: "1." "2." "1)" "2)" at the start of a line
+_LIST_PREFIX_RE = re.compile(r"^\d+[\.\)]\s+")
+
+
+def _strip_numbered_list(content: str) -> str:
+    """If the content looks like a numbered list (most lines start with 1. 2. 3.),
+    strip those prefixes so TTS reads the text continuously without announcing numbers.
+    Safe: only strips when ≥50% of non-empty lines have a numeric prefix."""
+    lines = content.split('\n')
+    non_empty = [l for l in lines if l.strip()]
+    if len(non_empty) < 3:
+        return content
+    numbered = sum(1 for l in non_empty if _LIST_PREFIX_RE.match(l.strip()))
+    if numbered / len(non_empty) < 0.5:
+        return content  # doesn't look like a numbered list
+    # Strip the "N. " / "N) " prefix from every line
+    return '\n'.join(
+        _LIST_PREFIX_RE.sub('', line) if _LIST_PREFIX_RE.match(line.strip()) else line
+        for line in lines
+    )
+
+
 def _looks_like_chapter_heading(text: str) -> bool:
     t = text.strip()
     if not t or len(t) > 150:
@@ -128,7 +150,7 @@ def parse(filepath: str) -> list[dict]:
         if is_chapter_start:
             # Save previous chapter
             if current_title is not None:
-                content = "\n".join(current_lines).strip()
+                content = _strip_numbered_list("\n".join(current_lines).strip())
                 if content:
                     chapters.append({"title": current_title, "content": content})
             raw_title = ": ".join(chapter_title_parts) if chapter_title_parts else "Chapter"
@@ -142,7 +164,8 @@ def parse(filepath: str) -> list[dict]:
 
     # Flush last chapter
     if current_title and current_lines:
-        chapters.append({"title": current_title, "content": "\n".join(current_lines).strip()})
+        content = _strip_numbered_list("\n".join(current_lines).strip())
+        chapters.append({"title": current_title, "content": content})
 
     # Final fallback: return entire doc as one chapter
     if not chapters:
