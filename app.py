@@ -219,14 +219,17 @@ def update_chapters(book_id):
 
 
 def _parse_tts_params(params: dict):
+    def _f(key, default):
+        v = params.get(key)
+        return float(v) if v is not None else default
     return {
-        "api_key": params.get("api_key", "").strip(),
-        "voice_id": params.get("voice_id", ""),
-        "model_id": params.get("model_id", "eleven_multilingual_v2"),
-        "stability": float(params.get("stability", 0.5)),
-        "similarity_boost": float(params.get("similarity_boost", 0.75)),
-        "style": float(params.get("style", 0.0)),
-        "speed": float(params.get("speed", 1.0)),
+        "api_key": (params.get("api_key") or "").strip(),
+        "voice_id": params.get("voice_id") or "",
+        "model_id": params.get("model_id") or "eleven_multilingual_v2",
+        "stability": _f("stability", 0.5),
+        "similarity_boost": _f("similarity_boost", 0.75),
+        "style": _f("style", 0.0),
+        "speed": _f("speed", 1.0),
     }
 
 

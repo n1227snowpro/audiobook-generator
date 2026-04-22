@@ -867,8 +867,9 @@ document.getElementById('btn-test-voice').addEventListener('click', async () => 
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      showAlert('alert-generate', 'Test failed: ' + (err.error || res.statusText));
+      let errMsg = res.statusText;
+      try { const err = await res.json(); errMsg = err.error || res.statusText; } catch (_) {}
+      showAlert('alert-generate', 'Test failed: ' + errMsg);
       return;
     }
 
