@@ -409,12 +409,28 @@ async function loadRecentBooks() {
 }
 
 async function resumeBook(id) {
-  currentBookId = id;
-  const res = await fetch('/api/books/'+id);
-  const book = await res.json();
-  if (book.status === 'done') { await loadDownloadStep(); goToStep(5); }
-  else if (book.status === 'generating') { await startSSE(id); goToStep(4); }
-  else { await loadChaptersStep(); goToStep(2); }
+  try {
+    currentBookId = id;
+    const res = await fetch('/api/books/'+id);
+    if (!res.ok) { showAlert('upload-msg', 'Could not load book.'); return; }
+    const book = await res.json();
+
+    if (book.status === 'done') {
+      await loadDownloadStep();
+      goToStep(5);
+    } else if (book.status === 'generating' || book.status === 'confirmed') {
+      // Resume at the generate step — chapters already confirmed, voice settings
+      // are restored from server on page load
+      await loadGenerateStep();
+      goToStep(4);
+    } else {
+      // 'uploaded' or 'parsed' — still need to review/confirm chapters
+      await loadChaptersStep();
+      goToStep(2);
+    }
+  } catch(e) {
+    showAlert('upload-msg', 'Error opening book: ' + e.message);
+  }
 }
 
 async function deleteBook(id) {
