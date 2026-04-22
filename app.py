@@ -410,7 +410,10 @@ def _chunk_text(text: str, max_chars: int = 4800) -> list[str]:
 
 def _normalize_acx(path: Path) -> dict | None:
     """Normalize an MP3 to ACX standards: -20 dB RMS target, peak ≤ -3 dBFS, 192 kbps 44.1 kHz.
-    Returns {"rms_db": float, "peak_db": float} or None on failure."""
+    Uses ffmpeg alimiter so peaks are clamped without dragging down the overall RMS.
+    Returns {"rms_db": float, "peak_db": float} measured from the actual exported file."""
+    import subprocess, tempfile as _tf
+
     try:
         from pydub import AudioSegment
 
@@ -421,24 +424,40 @@ def _normalize_acx(path: Path) -> dict | None:
             return {"rms_db": round(audio.dBFS, 1), "peak_db": round(audio.max_dBFS, 1)}
 
         TARGET_RMS_DB = -20.0
-        PEAK_LIMIT_DB = -3.0
+        PEAK_LIMIT_LINEAR = 10 ** (-3.0 / 20)   # -3 dBFS ≈ 0.7079
 
-        gain_db = TARGET_RMS_DB - audio.dBFS
-        normalized = audio.apply_gain(gain_db)
+        gain_db = TARGET_RMS_DB - audio.dBFS     # how much to boost to hit -20 dB RMS
 
-        # Back off gain if peak would clip above -3 dBFS
-        if normalized.max_dBFS > PEAK_LIMIT_DB:
-            gain_db -= (normalized.max_dBFS - PEAK_LIMIT_DB)
-            normalized = audio.apply_gain(gain_db)
+        # Use ffmpeg: volume filter raises RMS, alimiter clamps peaks without
+        # reducing overall gain (unlike simple gain-backoff which pulls RMS down).
+        tmp = Path(_tf.mktemp(suffix=".mp3"))
+        try:
+            cmd = [
+                "ffmpeg", "-y", "-i", str(path),
+                "-filter:a",
+                f"volume={gain_db:.4f}dB,alimiter=limit={PEAK_LIMIT_LINEAR:.6f}:level=false:attack=5:release=50",
+                "-codec:a", "libmp3lame", "-b:a", "192k", "-ar", "44100",
+                str(tmp),
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
 
-        normalized.export(
-            str(path),
-            format="mp3",
-            bitrate="192k",
-            parameters=["-ar", "44100"],
-        )
+            if result.returncode == 0:
+                tmp.replace(path)
+            else:
+                # ffmpeg failed — fall back to simple pydub gain (old behaviour)
+                print(f"[ACX normalize] ffmpeg failed: {result.stderr.decode()[:300]}")
+                normalized = audio.apply_gain(gain_db)
+                if normalized.max_dBFS > -3.0:
+                    gain_db -= (normalized.max_dBFS - (-3.0))
+                    normalized = audio.apply_gain(gain_db)
+                normalized.export(str(path), format="mp3", bitrate="192k", parameters=["-ar", "44100"])
+        finally:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
 
-        return {"rms_db": round(normalized.dBFS, 1), "peak_db": round(normalized.max_dBFS, 1)}
+        # Read the actual exported file to report real RMS/peak values
+        actual = AudioSegment.from_mp3(str(path))
+        return {"rms_db": round(actual.dBFS, 1), "peak_db": round(actual.max_dBFS, 1)}
 
     except Exception as e:
         print(f"[ACX normalize] warning: {e}")
