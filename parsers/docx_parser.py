@@ -114,7 +114,9 @@ def parse(filepath: str) -> list[dict]:
             chapter_title_parts.append(text)
             i += 1
             continue_outer = True
-        elif not chapter_style and _looks_like_chapter_heading(text):
+        elif _looks_like_chapter_heading(text):
+            # Always catch Introduction/Conclusion/Prologue/etc. regardless of style,
+            # because these sections often use a different style than numbered chapters.
             is_chapter_start = True
             chapter_title_parts.append(text)
             i += 1

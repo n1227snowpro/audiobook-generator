@@ -9,7 +9,7 @@ CHAPTER_PATTERNS = [
     re.compile(r"^(chapter\s+[a-z]+[\.:—\-]?\s*.*)$", re.IGNORECASE),
     re.compile(r"^(\d+[\.:]\s+[A-Z].{3,80})$"),
     re.compile(r"^(part\s+\d+[\.:—\-]?\s*.*)$", re.IGNORECASE),
-    re.compile(r"^(prologue|epilogue|introduction|preface|foreword|conclusion|afterword)$", re.IGNORECASE),
+    re.compile(r"^(prologue|epilogue|introduction|preface|foreword|conclusion|afterword)([\s:.\-–—].{0,80})?$", re.IGNORECASE),
 ]
 
 
