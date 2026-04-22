@@ -775,7 +775,29 @@ def save_settings():
     return jsonify({"ok": True})
 
 
-if __name__ == "__main__":
+def _reset_orphaned_generating():
+    """On startup, any chapter/book left in 'generating' status was interrupted
+    by a server restart.  Reset them so the user can retry."""
     with app.app_context():
         db.create_all()
+        stuck_chapters = Chapter.query.filter_by(status="generating").all()
+        if stuck_chapters:
+            for ch in stuck_chapters:
+                ch.status = "error"
+                ch.error_msg = "Interrupted by server restart — click Retry to regenerate."
+            db.session.commit()
+            print(f"[startup] Reset {len(stuck_chapters)} orphaned 'generating' chapter(s) to 'error'.")
+
+        stuck_books = Book.query.filter_by(status="generating").all()
+        for book in stuck_books:
+            chapters = book.chapters
+            if all(ch.status == "done" for ch in chapters):
+                book.status = "done"
+            else:
+                book.status = "confirmed"   # let user resume from generate step
+        db.session.commit()
+
+
+if __name__ == "__main__":
+    _reset_orphaned_generating()
     app.run(debug=True, port=8081, threaded=True)

@@ -15,7 +15,7 @@ ENV DATA_DIR=/data
 EXPOSE 8000
 
 CMD ["sh", "-c", \
-     "python -c \"from app import app, db; app.app_context().push(); db.create_all()\" \
+     "python -c \"from app import _reset_orphaned_generating; _reset_orphaned_generating()\" \
      && gunicorn app:app \
           --bind 0.0.0.0:8000 \
           --worker-class gthread \
