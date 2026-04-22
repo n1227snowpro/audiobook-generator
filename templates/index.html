@@ -704,7 +704,12 @@ document.getElementById('btn-proceed-to-generate').addEventListener('click', asy
   const voiceId = document.getElementById('voice-select').value;
   if (!apiKey) { showAlert('alert-voice', 'Enter your ElevenLabs API key.'); return; }
   if (!voiceId) { showAlert('alert-voice', 'Select a voice.'); return; }
-  localStorage.setItem(LAST_KEY, JSON.stringify(currentSettings()));
+  // Save current voice/model selection to server for next session
+  const s = currentSettings();
+  fetch('/api/settings', {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ last_api_key: s.api_key, last_voice_id: s.voice_id, last_model_id: s.model_id }),
+  }).catch(() => {});
   await loadGenerateStep();
   goToStep(4);
 });
