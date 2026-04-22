@@ -797,7 +797,7 @@ function renderGenerateList(chapters) {
     const isGenerating = ch.status === 'generating';
     const isDone = ch.status === 'done';
     return `
-    <div class="chapter-row" id="gen-ch-${ch.id}" style="grid-template-columns:36px 1fr auto auto auto auto auto;">
+    <div class="chapter-row" id="gen-ch-${ch.id}" style="grid-template-columns:36px 1fr auto auto auto auto auto auto;">
       <span class="num">${ch.chapter_number}</span>
       <span style="font-size:0.9rem;">${escHtml(ch.title)}</span>
       <span class="chars">${fmt(ch.char_count)} chars</span>
@@ -813,6 +813,9 @@ function renderGenerateList(chapters) {
         ${ch.acx_rms_db != null ? `RMS ${ch.acx_rms_db.toFixed(1)} / Peak ${ch.acx_peak_db.toFixed(1)}` : ''}
       </span>
       <span class="status-badge badge-${ch.status}" id="gen-ch-status-${ch.id}">${ch.status}</span>
+      <a id="gen-ch-dl-${ch.id}" href="/api/chapters/${ch.id}/download"
+         class="btn btn-success btn-sm" style="${isDone ? '' : 'visibility:hidden;'}"
+         title="Download">⬇</a>
       <button class="btn btn-secondary btn-sm" id="gen-ch-btn-${ch.id}"
         onclick="generateOne(${ch.id})"
         ${isGenerating ? 'disabled' : ''}
@@ -926,9 +929,11 @@ function ensureSSE(bookId) {
     else if (ev.type === 'chapter_done') {
       const badge  = document.getElementById('gen-ch-status-'+ev.data.chapter_id);
       const btn    = document.getElementById('gen-ch-btn-'+ev.data.chapter_id);
+      const dlBtn  = document.getElementById('gen-ch-dl-'+ev.data.chapter_id);
       const acxSpan = document.getElementById('acx-ch-'+ev.data.chapter_id);
       if (badge) { badge.textContent = 'done'; badge.className = 'status-badge badge-done'; }
       if (btn)   { btn.disabled = false; btn.textContent = '↺ Re-gen'; }
+      if (dlBtn) { dlBtn.style.visibility = ''; }
       if (acxSpan && ev.data.acx) {
         const rms  = ev.data.acx.rms_db.toFixed(1);
         const peak = ev.data.acx.peak_db.toFixed(1);
