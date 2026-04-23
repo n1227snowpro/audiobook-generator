@@ -330,6 +330,7 @@
         <button class="btn btn-secondary" onclick="goToStep(3)">← Change Voice</button>
         <button class="btn btn-primary" id="btn-generate-all-remaining">⚡ Generate All Remaining</button>
         <button class="btn btn-secondary" id="btn-go-download" style="display:none;">View Downloads →</button>
+        <button class="btn btn-success" id="btn-download-all-gen" style="display:none;" onclick="window.location.href='/api/books/'+currentBookId+'/download-all'">⬇ Download All (ZIP)</button>
       </div>
     </div>
 
@@ -854,6 +855,8 @@ function updateGenSummary(chapters) {
   document.getElementById('gen-progress-label').textContent = '';
   const dlBtn = document.getElementById('btn-go-download');
   dlBtn.style.display = done > 0 ? '' : 'none';
+  const dlAllBtn = document.getElementById('btn-download-all-gen');
+  dlAllBtn.style.display = done > 0 ? '' : 'none';
 }
 
 async function generateOne(chapterId) {
